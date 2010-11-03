@@ -1,0 +1,673 @@
+#!/usr/bin/ruby
+# -*- coding: utf-8 -*-
+
+require 'rubygems'
+require 'nokogiri'
+require 'zipruby'
+require 'epub'
+
+require 'date'
+require 'pathname'
+require 'yaml'
+require 'i18n'
+# require 'locale'
+
+# TODO:
+# * Support all metadata, including name syntax, lists, types, etc
+# + Sanitize file reader/writers, string vs DOM vs IO in chain
+# + Generate HTML, Wordpress
+# - Transform dialog styles
+# - Nice namespace, package name
+# - Smart format graph to generate chains
+# - Import RTF, other formats
+
+# FIXME:
+# [epub gem] remove newline in mimetype file
+# [epub gem] add XML header to OPF file
+# [epub gem] separate creators if many
+#        <meta name="cover" content="anglemort.jpg"/>
+#        <meta name="Sigil version" content="0.2.4"/>
+# toc.ncx:
+# <?xml version="1.0" encoding="UTF-8"?>
+# <!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN"
+#    "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
+
+
+module Hypermonk
+  VERSION = '0.1'
+end
+
+RESOURCE_ROOT = File.dirname(__FILE__) + '/resources'
+
+module Pivot
+end
+
+module Xslt
+  RESOURCE_DIR = RESOURCE_ROOT + '/xslt'
+  def self.get(name)
+    return Nokogiri::XSLT(File.read("#{RESOURCE_DIR}/#{name}.xslt"))
+  end
+end
+
+
+
+module FormatConverter
+  def self.included(klass)
+    klass.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def from(format)
+      @from = format
+    end
+
+    def to(format)
+      @to = format
+    end
+  end
+
+  def transform(source, metadata)
+    raise MissingMethodException unless self.respond_to?(:convert)
+    args = (method(:convert).arity == 1 ? [source] : [source, metadata])
+    [self.convert(*args), metadata].flatten[0...2]
+  end
+end
+
+module TextFilter
+  def apply_filter(source, filter)
+    self.method(filter).call(source)
+  end
+
+  # FIXME: change so that it doesn't depend on include order
+  def transform(source, metadata)
+    source = self.apply_filter(source, :pre_filter)  if self.respond_to?(:pre_filter)
+    source, metadata = super(source, metadata)
+    source = self.apply_filter(source, :post_filter) if self.respond_to?(:post_filter)
+    [source, metadata]
+  end
+end
+
+module TextNodeFilter
+  include TextFilter
+
+  def apply_filter_recursive(e, filter)
+    e.children.each do |child|
+      if child.is_a?(Nokogiri::XML::Text)
+        # FIXME: avoid escaping - works with multiple subnodes etc?
+        # child.inner_html = self.method(filter).call(child.inner_html)
+        child.content = self.method(filter).call(child.content)
+      else
+        self.apply_filter_recursive(child, filter)
+      end
+    end
+  end
+
+  def apply_filter(source, filter)
+# FIXME: arg, make it apply to both docbook and meta!
+    source.root.xpath('//para').each {|e| self.apply_filter_recursive(e, filter)}
+    source.root.xpath('//p').each {|e| self.apply_filter_recursive(e, filter)}
+    source
+  end
+end
+
+
+class MetadataPrompt
+  include FormatConverter
+
+  # FIXME: or any-to-any?
+  from :meta
+  to   :meta
+
+  METADATA = {
+    :title            => 'Title',
+    :author           => 'Author(s)',
+    :translator       => 'Translators(s)',
+    :publication_date => 'Publication date',
+    :publisher        => 'Publisher',
+    :license          => 'License',
+    # :date        => 'Date',
+    # :language    => 'Language',
+    :identifier  => 'Identifier (URI)'
+  }
+  # FIXME: for each field:
+  # - required
+  # - type
+  # - multiple values
+  # - default (load from somewhere?)
+  # - type (validation)
+
+  # FIXME: special format, e.g. author (last, first)
+
+  def convert(source, metadata)
+    # inspect metadata, fill missing
+    METADATA.select {|key,| metadata[key].nil?}.each do |key, label|
+      print "#{label}: "
+      value = STDIN.gets.chomp
+      metadata[key] = value if value
+    end
+
+    [source, metadata]
+  end
+end
+
+class LoadMetadata
+  include FormatConverter
+
+  # FIXME: or any-to-any?
+  from :meta
+  to   :meta
+
+  def convert(source, metadata)
+    metadata[:title] ||= source.root.xpath('/html/head/title').text
+    metadata[:author] ||= source.root.xpath('/html/head/meta[@name="author"]/@content').text
+    metadata[:translator] ||= source.root.xpath('/html/head/meta[@name="translator"]/@content').text
+    metadata[:publisher] ||= source.root.xpath('/html/head/meta[@name="DC.publisher"]/@content').text
+    metadata[:publication_date] ||= source.root.xpath('/html/head/meta[@name="DC.date"]/@content').text
+    metadata[:identifier] ||= source.root.xpath('/html/head/meta[@name="DC.identifier"]/@content').text
+
+    # FIXME: hack, drop "" values
+    metadata = metadata.delete_if {|k, v| v.nil? || v == ''}
+
+    if metadata[:publication_date]
+      metadata[:publication_date_formatted] = metadata[:publication_date]
+      # metadata[:publication_date_formatted] = Date.parse(metadata[:publication_date]).strftime('%e %B %Y')
+    end
+
+    # FIXME: hack
+    # metadata[:xsl_path] = Pathname.new(Xslt::RESOURCE_DIR).realpath.to_s
+
+    [source, metadata]
+  end
+end
+
+module FrenchSyntax
+end
+
+class LocalizeTypography
+end
+
+
+class WordImporter
+  include FormatConverter
+
+  from :doc
+  to   :docbook
+
+  def convert(source)
+    xml=`antiword -x db "#{source}"`
+    opts = Nokogiri::XML::ParseOptions
+    doc = Nokogiri::XML::Document.parse(xml, nil, 'UTF-8', opts::NOBLANKS)
+
+    # delete empty <para>
+    doc.root.xpath('//para[not(normalize-space())]').each {|e| e.remove}
+
+    return doc
+  end
+end
+
+
+
+class TextImporter
+  include FormatConverter
+
+  from :txt
+  to   :docbook
+
+  def convert(source)
+    paras = File.read(source).gsub(/\r\n/, "\n").split(/\n\n+/)
+    paras.map! {|p| p.gsub(/\n/, ' ').chomp(' ')}
+    xml = <<EOS
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN"
+        "http://www.oasis-open.org/docbook/xml/4.1.2/docbookx.dtd">
+<book lang='en_US'>
+<chapter>
+EOS
+    xml += "<para>" +paras.join("</para>\n<para>")+ "</para>\n"
+    xml += "</chapter></book>"
+    doc = Nokogiri::XML::Document.parse(xml, nil, 'UTF-8')
+    return doc
+  end
+end
+
+
+class DocbookTransformer
+  include FormatConverter
+  include TextNodeFilter
+
+  from :docbook
+  to   :meta
+
+  def convert(source, metadata)
+    xslt = Xslt.get('docbook-to-pivot')
+    html = xslt.transform(source, Nokogiri::XSLT.quote_params(metadata))
+    # Handle::HTML.new { html }
+  end
+
+  def pre_filter(text)
+    text = text.gsub(/ *\n */, '')
+    text = text.gsub('  ', ' ')
+
+    text = text.gsub(/ ([!?:;])/, '\1') # can't match nbsp in [] as it's multibyte, so clean first
+    text = text.gsub(/\s*([!?:;])/, ' \1') #nbsp
+    text = text.gsub(/--+/, '–') #endash
+
+    text = text.gsub(/^—/, '–') # replace dialog (start-of-line) emdash by endash
+    text = text.gsub(/"(.*)"/, '“\1”') # replace straight double quotes by curly quote pairs
+    text = text.gsub(/'/, '’') # replace straight apostrophe by curly apostrophe
+
+    # ADD: single and double quotes, guillemets (and nbsp!)
+    # ADD: ellipsis
+    # ADD: apostrophe
+
+    # FIXME: or use unicode?
+    # text = text.gsub(/[’']/, '&apos;')
+    text = text.gsub('...', '…')
+    text = text.gsub('oe', 'œ')
+    text = text.gsub('Oe', 'Œ')
+    text = text.gsub('OE', 'Œ')
+    text = text.gsub('ae', 'æ')
+    text = text.gsub('Ae', 'Æ')
+    text = text.gsub('AE', 'Æ')
+  end
+end
+
+
+class LatexExporter
+  include FormatConverter
+  include TextNodeFilter
+
+  from :meta
+  to   :latex
+
+  def convert(source, metadata)
+    xslt = Xslt.get('pivot-to-latex')
+    latex = xslt.apply_to(source, Nokogiri::XSLT.quote_params(metadata))
+    post_filter_x(latex)
+
+    # FIXME: cleaner later
+    # Handle::LaTeX.new do
+    #   post_filter_x(latex)
+    # end
+  end
+
+  # convert unicode into LaTeX code
+  # FIXME: or accept them in LaTeX
+  def pre_filter(text)
+    text = text.gsub(/ ([!?:;])/, '\1') # strip punctuation nbsp, done by LaTeX
+    text = text.gsub(' ', '~')
+    text = text.gsub('–', '--') #endash
+    text = text.gsub('…', '\ldots\ ')
+    text = text.gsub('€', '{\euro}')
+    text = text.gsub('$', '\$')
+    # text = text.gsub('«', '<<')
+    # text = text.gsub('»', '>>')
+  end
+
+  # FIXME: aah, this is text now!
+  def post_filter_x(text)
+    # FIXME: entities shouldn't happen...
+    text = text.gsub('&quot;', '"')
+    text = text.gsub('&amp;', '\&')
+    # FIXME: post else converted to entity..
+    text = text.gsub('«', '<<')
+    text = text.gsub('»', '>>')
+    # FIXME: should be clean in the pivot file?
+    # text = text.gsub(/"([a-zA-Z])/, '``\1')
+    # text = text.gsub('"', "''")
+  end
+end
+
+class LatexFragmenter
+  include FormatConverter
+
+  from :latex
+  to   :latex
+
+  def convert(source, metadata)
+    Handle::LaTeX.new('-frag') do
+      source.scan(/\\maketitle(.*)\\label.LastPage/m)[0][0].strip
+    end
+  end
+end
+
+class PdfExporter
+  include FormatConverter
+
+  from :latex
+  to   :pdf
+
+  RESOURCE_DIR = RESOURCE_ROOT + '/latex'
+  LATEX_FILENAME = 'content.tex'
+
+  def init_resources
+    # FIXME: copy latex resources if absent
+  end
+
+  def convert(source)
+    init_resources
+    Dir.chdir(RESOURCE_DIR) do
+      File.open(LATEX_FILENAME, 'w') {|f| f.write(source) }
+      `pdflatex #{LATEX_FILENAME}`
+      `pdflatex #{LATEX_FILENAME}`
+    end
+    pdf_filename = LATEX_FILENAME.sub(/.tex$/, '.pdf')
+
+    Handle::PDF.new(RESOURCE_DIR + '/' + pdf_filename)
+  end
+end
+
+
+class HTMLExporter
+  include FormatConverter
+
+  from :meta
+  to   :html
+
+  def pre_filter(text)
+  # text = text.gsub('…', '&hellip;')
+  # text = text.gsub('oe', '&oelig;')
+  # text = text.gsub('Oe', '&OElig;')
+  # text = text.gsub('OE', '&OElig;')
+  # text = text.gsub('ae', '&aelig;')
+  # text = text.gsub('Ae', '&AElig;')
+  # text = text.gsub('AE', '&AElig;')
+  end
+
+  def convert(source)
+    # FIXME: put title, author, etc in the body?
+    # FIXME: use template, theme?
+    # FIXME: valid xhtml
+
+    Handle::HTML.new { source }
+  end
+end
+
+class WordpressExporter
+  include FormatConverter
+
+  from :meta
+  to   :html
+
+  def pre_filter(text)
+  # text = text.gsub('…', '&hellip;')
+  # text = text.gsub('oe', '&oelig;')
+  # text = text.gsub('Oe', '&OElig;')
+  # text = text.gsub('OE', '&OElig;')
+  # text = text.gsub('ae', '&aelig;')
+  # text = text.gsub('Ae', '&AElig;')
+  # text = text.gsub('AE', '&AElig;')
+  end
+
+  def convert(source, metadata)
+    # FIXME: put title, author, etc in the body?
+    # FIXME: use template, theme?
+    # FIXME: valid xhtml
+    xslt = Xslt.get('pivot-to-wordpress')
+    Handle::HTML.new { xslt.apply_to(source, Nokogiri::XSLT.quote_params(metadata)) }
+  end
+end
+
+
+class EpubExporter
+  include FormatConverter
+
+  from :meta
+  to   :epub
+
+  RESOURCE_DIR = RESOURCE_ROOT + '/epub'
+  EPUB_FILENAME = 'content.epub'
+  WORK_DIR = 'tmp-epub'
+
+  def convert(source, metadata)
+    # use epub lib to substitute metadata
+
+    # start afresh
+    FileUtils.rm_rf(WORK_DIR) if File.exists?(WORK_DIR)
+
+    epub = Epub::Project.new(WORK_DIR)
+    epub.title = metadata[:title]
+    epub.add_creator(metadata[:author], 'aut')
+    epub.add_creator(metadata[:translator], 'trl') if metadata[:translator]
+
+    # publisher, date, rights, license
+    if metadata[:publication_date]
+      pub_date = Date.parse(metadata[:publication_date])
+      epub.opf_file.dc_other.push Epub::Opf::Dc.new('date', pub_date.to_s, :"opf:event" => 'publication')
+      # copyright to author if standalone, publisher otherwise
+      rightsholder = (metadata[:standalone] == 1) ? metadata[:author] : metadata[:publisher]
+      epub.opf_file.dc_other.push Epub::Opf::Dc.new('rights', "Copyright (c) #{pub_date.year}, #{rightsholder}")
+    end
+    epub.opf_file.dc_other.push Epub::Opf::Dc.new('publisher', metadata[:publisher]) if metadata[:publisher]
+    epub.opf_file.dc_other.push Epub::Opf::Dc.new('rights', metadata[:license]) if metadata[:license]
+
+    epub.identifier = metadata[:identifier] if metadata[:identifier]
+    epub.language = metadata[:language] if metadata[:language]
+
+    # add/write files
+    Dir.glob(RESOURCE_DIR + '/content/**/*.*').each do |file|
+      next if file.match(/~$/)
+      FileUtils.mkdir_p(File.dirname(file.sub(RESOURCE_DIR, epub.directory)))
+      File.copy(file, file.sub(RESOURCE_DIR, epub.directory))
+    end
+
+    # generate title/contents files
+    xslt_title = Xslt.get('pivot-to-epub-title')
+    doc_title = xslt_title.apply_to(source, Nokogiri::XSLT.quote_params(metadata))
+    File.open(WORK_DIR + '/content/title.html', 'w') {|f| f.write(doc_title)}
+
+    xslt_contents = Xslt.get('pivot-to-epub-contents')
+    doc_contents = xslt_contents.apply_to(source, Nokogiri::XSLT.quote_params(metadata))
+    File.open(WORK_DIR + '/content/contents.html', 'w') {|f| f.write(doc_contents)}
+
+    # register files
+    epub.register_with_ncx('title',    'Titre', 'content/title.html')
+    epub.register_with_ncx('contents', 'Texte', 'content/contents.html')
+
+    epub.register_with_opf('title', 'content/title.html', true, 'application/xhtml+xml')
+    epub.register_with_opf('contents', 'content/contents.html', true, 'application/xhtml+xml')
+    epub.register_with_opf('stylesheet', 'content/style/angle.css', false, 'text/css')
+    epub.register_with_opf('logo', 'content/images/anglemort.jpg', false, 'image/jpeg')
+
+    epub.compile
+
+    # FileUtils.rm_rf(epub.directory) # cleanup
+
+    Handle::EPub.new(WORK_DIR + '.epub')
+  end
+end
+
+
+def run_chain(chain, source, metadata={})
+  chain.inject([source, metadata]) do |s_m, converter|
+    conv = converter.new
+    s_m = conv.transform(*s_m)
+  end
+end
+
+def show_usage_and_die
+  puts "usage: pub <command>"
+  puts
+  puts "  import <source> [publication]  Import a file into a new document."
+  puts "  export <format> <publication>  Export a document into the given format."
+  exit 1
+end
+
+
+class Publication
+  PIVOT_EXTENSION = 'html'
+
+  def initialize(path)
+    File.makedirs(path) unless File.exists?(path)
+    throw "invalid publication: #{path}" unless File.directory?(path)
+
+    @path = path
+    @name = File.basename(path)
+  end
+
+  def pivot_file
+    @pivot_file ||= "#{@path}/#{@name}.#{PIVOT_EXTENSION}"
+  end
+
+  def read_pivot
+    begin
+      return File.read(pivot_file)
+    rescue StandardError => e
+      throw "no pivot imported for publication #{@path}"
+    end
+  end
+
+  def write_pivot(data, backup_existing=true)
+    if File.exists?(pivot_file)
+      backup_path = "#{@path}/backups"
+      File.makedirs(backup_path) unless File.exists?(backup_path)
+      FileUtils.mv(pivot_file, "#{backup_path}/#{@name}.#{PIVOT_EXTENSION}-#{DateTime.now.strftime}")
+    end
+    File.open(pivot_file, 'w') {|f| f.write(data)}
+  end
+
+  def write_output(handle)
+    File.makedirs(output_dir) unless File.exists?(output_dir)
+    handle.write_to("#{output_dir}/#{@name}#{handle.suffix}.#{handle.extension}")
+  end
+
+  protected
+  def output_dir; "#{@path}/output"; end
+
+end
+
+
+# FIXME: plugins must pass each other a handle that contains
+# - optional in-memory data
+# - or object (e.g. XML object?)
+# - write each step in work/ ?
+# - handle can express AST of what it refers to?
+class Handle
+  attr_reader :name, :extension, :suffix
+  attr_reader :serialized_file, :data
+
+  def initialize(name, extension, suffix)
+    @name = name
+    @extension = extension
+    @suffix = suffix || ''
+  end
+
+  def write_to(path)
+    if serialized_file
+      FileUtils.cp(serialized_file, path)
+    elsif data
+      File.open(path, 'w') {|f| f.write(data)}
+    else
+      throw "no data referenced by handle"
+    end
+  end
+end
+
+class Handle::PDF < Handle
+  def initialize(file, suffix=nil)
+    super('PDF', 'pdf', suffix)
+    @serialized_file = file
+  end
+end
+
+class Handle::EPub < Handle
+  def initialize(file, suffix=nil)
+    super('EPub', 'epub', suffix)
+    @serialized_file = file
+  end
+end
+
+class Handle::LaTeX < Handle
+  def initialize(suffix=nil, &block)
+    super('LaTeX', 'tex', suffix)
+    @data = block.call if block_given?
+  end
+end
+
+class Handle::HTML < Handle
+  def initialize(suffix=nil, &block)
+    super('HTML', 'html', suffix)
+    @data = block.call if block_given?
+  end
+end
+
+class Handle::Wordpress < Handle::HTML
+  def initialize(&block)
+    super('-wordpress', &block)
+  end
+end
+
+
+command=ARGV[0]
+case command
+when 'import'
+  source, pivot = ARGV[1..2]
+  show_usage_and_die if source.nil?
+
+  publication = Publication.new(pivot)
+
+  # pivot = source.sub(/\.[^.]*$/, '.html') if pivot.nil?
+
+  chain = case source.downcase
+          when /\.doc$/; [WordImporter, MetadataPrompt, DocbookTransformer]
+          # when /\.rtf$/; ...
+          when /\.txt$/; [TextImporter, MetadataPrompt, DocbookTransformer]
+          else
+            raise 'Unknown import format #{source.scan(/\..*$/)}'
+          end
+
+  res_source, res_metadata = run_chain(chain, source)
+  publication.write_pivot(res_source)
+
+when 'draft'
+  publication = ARGV[1]
+  FileUtils.mkdir_p(publication) unless File.exists?(publication)
+  raise "#{publication} is not a directory!" unless File.directory?(publication)
+
+  pub_file = "#{publication}/#{File.basename(publication)}.html"
+  raise "#{pub_file} already exists!" if File.exists?(pub_file)
+
+  FileUtils.cp(RESOURCE_ROOT + '/draft.html', pub_file)
+  puts "Created #{pub_file} successfully!"
+
+when 'transform'
+  # FIXME: intermediate transforms
+
+when 'export'
+  format, pivot = ARGV[1..2]
+  inline_metadata = Hash[ARGV[3..-1].map {|s| pair = s.split('='); [pair[0].intern, pair[1]]}]
+  show_usage_and_die if format.nil? || pivot.nil?
+
+  # FIXME: do more generically
+  project_metadata = File.exists?('hypermonk.yml') ? YAML.load_file('hypermonk.yml') : {}
+
+  if inline_metadata[:license_type]
+    inline_metadata[:license] = project_metadata[:licenses][inline_metadata[:license_type].intern]
+  end
+  inline_metadata[:standalone] = 0 unless inline_metadata[:standalone]
+
+  publication = Publication.new(pivot)
+
+  chain = case format
+          when 'latex';[LoadMetadata, LatexExporter]
+          when 'latex-fragment';[LoadMetadata, LatexExporter, LatexFragmenter]
+          when 'pdf';  [LoadMetadata, LatexExporter, PdfExporter]
+          when 'html'; [LoadMetadata, HTMLExporter]
+          when 'wordpress'; [WordpressExporter]
+          when 'epub'; [LoadMetadata, EpubExporter]
+          else
+            raise "Unknown export format #{format}"
+          end
+
+  source = publication.read_pivot
+  # FIXME: pass string?
+  source_doc = Nokogiri::HTML::Document.parse(source, nil, 'UTF-8')
+  metadata = project_metadata.merge(inline_metadata)
+  res_source, res_metadata = run_chain(chain, source_doc, metadata)
+
+  raise 'no handle returned' unless res_source.is_a?(Handle)
+
+  publication.write_output(res_source)
+else
+  show_usage_and_die
+end
