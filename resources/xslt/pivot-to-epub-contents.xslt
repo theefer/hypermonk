@@ -43,6 +43,8 @@
     <p class="end">FIN</p>
   </xsl:if>
 
+  <xsl:apply-templates select="div[contains(@class, 'meta') and contains(@class, 'post-text')]" mode="meta-post-text"/>
+
   <xsl:if test="$publication_type = 'editorial'">
     <p class="authors"><xsl:apply-templates select="$author"/></p>
   </xsl:if>
@@ -75,7 +77,7 @@
     <xsl:variable name="n" select="position()"/>
     <li id="footnote-{$n}">
       <a href="#footnote-ref-{$n}" class="footnote-backref"><xsl:value-of select="$n"/></a>
-      <span class="footnote-text"><xsl:apply-templates select="." mode="bottom"/></span>
+      <span class="footnote-text"><xsl:apply-templates /></span>
     </li>
   </xsl:for-each>
   </ol>
@@ -86,6 +88,14 @@
 <xsl:template match="span[@class='footnote']">
   <xsl:variable name="n"><xsl:number level="any"/></xsl:variable>
   <a href="#footnote-{$n}" id="footnote-ref-{$n}" class="footnote-ref"><xsl:value-of select="$n"/></a>
+</xsl:template>
+
+<!-- hide "meta" divs by default -->
+<!-- FIXME: substring matches meta? -->
+<xsl:template match="div[contains(@class, 'meta')]"></xsl:template>
+
+<xsl:template match="div[contains(@class, 'meta') and contains(@class, 'post-text')]" mode="meta-post-text">
+  <xsl:apply-templates/>
 </xsl:template>
 
 </xsl:stylesheet>

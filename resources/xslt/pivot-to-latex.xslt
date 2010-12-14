@@ -98,6 +98,8 @@
     \includegraphics[scale=0.06]{anglemort.pdf}\
   \end{minipage}}
 
+% PDF infos
+\usepackage[pdfborder={0 0 0}, pdftitle={\thetitle}, pdfauthor={\theauthor}]{hyperref} 
 
 \lfoot{}
 \cfoot{\thepage\ /\pageref{LastPage}}
@@ -165,6 +167,8 @@ $\ast\ast\ast$%
 </xsl:text>
 </xsl:if>
 
+<xsl:apply-templates select="div[contains(@class, 'meta') and contains(@class, 'post-text')]" mode="meta-post-text"/>
+
 <!-- FIXME: ugly, but don't want to add a vspace unless there is something coming -->
 <xsl:if test="$publication_type = 'interview' or $publication_type = 'editorial' or $translator or ($publication_type = 'fiction' and $standalone = '1' and ($publication_date_formatted or $license_type = 'cc_by_nc_nd_2'))">
 \vspace{2em}
@@ -223,6 +227,10 @@ URL~: \url{<xsl:apply-templates select="$identifier"/>}
 
 
 <xsl:template match="p[@class='question']">
+<xsl:if test="preceding-sibling::*">
+<!-- FIXME: can use \newline instead? -->
+\vspace{1em}
+</xsl:if>
 \textbf{<xsl:apply-templates disable-output-escaping="yes"/>}
 <xsl:text>
 
@@ -235,6 +243,16 @@ URL~: \url{<xsl:apply-templates select="$identifier"/>}
 <xsl:text>
 
 </xsl:text>
+</xsl:template>
+
+
+<!-- hide "meta" divs by default -->
+<!-- FIXME: substring matches meta? -->
+<xsl:template match="div[contains(@class, 'meta')]"></xsl:template>
+
+<xsl:template match="div[contains(@class, 'meta') and contains(@class, 'post-text')]" mode="meta-post-text">
+  <xsl:apply-templates/>
+  \vspace{1em}
 </xsl:template>
 
 
@@ -255,5 +273,7 @@ URL~: \url{<xsl:apply-templates select="$identifier"/>}
 <xsl:template match="em">\textit{<xsl:apply-templates/>}</xsl:template>
 
 <xsl:template match="strong">\textbf{<xsl:apply-templates/>}</xsl:template>
+
+<xsl:template match="a">\href{<xsl:value-of select="@href"/>}{<xsl:apply-templates/>}</xsl:template>
 
 </xsl:stylesheet>
