@@ -94,3 +94,11 @@ ol.footnotes li {
 	margin: 0 0 0 100px;
 }
 
+
+.meta.post-text p {
+  text-indent: 0;
+  margin-bottom: 1em;
+}
+.meta.post-text p + p {
+  margin-top: 1em;
+}

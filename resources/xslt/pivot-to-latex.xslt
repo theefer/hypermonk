@@ -98,8 +98,23 @@
     \includegraphics[scale=0.06]{anglemort.pdf}\
   \end{minipage}}
 
+\usepackage{color}
+% or another ``Angle Mort'' color?
+\definecolor{darkred}{RGB}{139,0,0}
+
 % PDF infos
-\usepackage[pdfborder={0 0 0}, pdftitle={\thetitle}, pdfauthor={\theauthor}]{hyperref} 
+\usepackage{hyperref}
+\hypersetup{
+  pdfborder={0 0 0},%
+  pdftitle={\thetitle},%
+  pdfauthor={\theauthor},%
+  linktoc=all,%
+  colorlinks=true,%
+  citecolor=black,%
+  filecolor=black,%
+  linkcolor=black,%
+  urlcolor=darkred
+}
 
 \lfoot{}
 \cfoot{\thepage\ /\pageref{LastPage}}
@@ -251,8 +266,28 @@ URL~: \url{<xsl:apply-templates select="$identifier"/>}
 <xsl:template match="div[contains(@class, 'meta')]"></xsl:template>
 
 <xsl:template match="div[contains(@class, 'meta') and contains(@class, 'post-text')]" mode="meta-post-text">
+  \begin{flushleft}
   <xsl:apply-templates/>
+  \end{flushleft}
   \vspace{1em}
+</xsl:template>
+
+<xsl:template match="div[contains(@class, 'meta') and contains(@class, 'post-text')]/div[@class = 'buy']/p">
+  \vspace{1em}
+  <xsl:apply-templates/>
+</xsl:template>
+
+<xsl:template match="div[contains(@class, 'meta') and contains(@class, 'post-text')]/div[@class = 'buy']">
+  \pagebreak
+  <xsl:apply-templates/>
+  \vfill
+</xsl:template>
+
+<xsl:template match="div[contains(@class, 'meta') and contains(@class, 'post-text')]/div[@class = 'buy']/p[@class = 'issue']">
+  <xsl:if test="$standalone = '1'">
+    \vspace{1em}
+    <xsl:apply-templates/>
+  </xsl:if>
 </xsl:template>
 
 
@@ -275,5 +310,15 @@ URL~: \url{<xsl:apply-templates select="$identifier"/>}
 <xsl:template match="strong">\textbf{<xsl:apply-templates/>}</xsl:template>
 
 <xsl:template match="a">\href{<xsl:value-of select="@href"/>}{<xsl:apply-templates/>}</xsl:template>
+
+<xsl:template match="ul">
+\begin{itemize}
+  <xsl:apply-templates/>
+\end{itemize}
+</xsl:template>
+
+<xsl:template match="ul/li">
+\item <xsl:apply-templates/>
+</xsl:template>
 
 </xsl:stylesheet>

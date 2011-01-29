@@ -95,7 +95,18 @@
 <xsl:template match="div[contains(@class, 'meta')]"></xsl:template>
 
 <xsl:template match="div[contains(@class, 'meta') and contains(@class, 'post-text')]" mode="meta-post-text">
-  <xsl:apply-templates/>
+  <!-- FIXME: copy ?? -->
+  <div class="post-text meta">
+    <xsl:apply-templates/>
+  </div>
 </xsl:template>
+
+<xsl:template match="div[contains(@class, 'meta') and contains(@class, 'post-text')]/div[@class = 'buy']/p[@class = 'issue']">
+  <xsl:if test="$standalone = '1'">
+    <!-- FIXME: copy ?? -->
+    <p class="issue"><xsl:apply-templates/></p>
+  </xsl:if>
+</xsl:template>
+
 
 </xsl:stylesheet>
