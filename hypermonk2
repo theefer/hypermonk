@@ -1,0 +1,612 @@
+#!/usr/bin/ruby
+# -*- coding: utf-8 -*-
+
+# TODO
+# * backup all this shit
+# * final ours/colophon
+# + type-specific identifiers (ISBN)
+# + generate issue 2
+# - remerciements?
+# - generate issue 1
+# - original publication support in Wordpress, else append
+# - add cover to epub TOC
+# - add TOC page in epub?
+# - runtime arguments:
+#   - marketing variants (ePagine)
+# - use proper generated file names
+# - cleanup the mess
+# - cleaner custom pretty titles depending on type (epub TOC, epub+pdf TOC/chapters)
+# - format-specific render_*
+# . generate Kindle .mobi
+# . generate browsable HTML version
+
+
+require 'rubygems'
+require 'eeepub'
+require 'yaml'
+require 'erubis'
+require 'nokogiri'
+require 'i18n'
+require 'locale'
+require 'fileutils'
+
+# p I18n.available_locales
+I18n.load_path = ['config/locales/fr.yml']
+I18n.default_locale = :fr
+
+class Format
+  attr_reader :name, :extension
+  def initialize(name, extension)
+    @name, @extension = name, extension
+  end
+
+  PDF   = Format.new('PDF', 'pdf')
+  LATEX = Format.new('LaTeX', 'tex')
+  EPUB  = Format.new('ePub', 'epub')
+end
+
+class Converter
+  CONVERSIONS = [
+    {:source => :pivot, :target => 'latex',
+     :xform => 'config/types/fiction/latex/pivot-to-latex.xslt'},
+    {:source => :pivot, :target => 'epub',
+     :xform => 'config/types/fiction/epub/pivot-to-epub.xslt'},
+    {:source => :pivot, :target => 'wordpress',
+     :xform => 'config/types/fiction/wordpress/pivot-to-wordpress.xslt',
+     :options => {:strip_xml_header => true}}
+  ]
+
+  def self.get(source_format, target_format)
+    conv = CONVERSIONS.find {|c| c[:source] == source_format && c[:target] == target_format}
+    new(conv[:xform], conv[:options] || {})
+  end
+
+  def initialize(xform, options={})
+    @xform = xform
+    @options = options
+  end
+
+  def run(data, params={})
+    source = Nokogiri::HTML::Document.parse(data, nil, 'UTF-8')
+
+    xslt = Nokogiri::XSLT(File.read(@xform))
+    transformed = xslt.apply_to(source, Nokogiri::XSLT.quote_params(params))
+    transformed.gsub!(/^<\?xml.*?\?>/, '') if @options[:strip_xml_header]
+    transformed
+  end
+end
+
+
+module Render; end
+
+class Render::Template
+  def self.get(type, output_type, name)
+    template_path = "config/types/#{type}/#{output_type}/#{name}"
+    if File.exists?(template_path)
+      return new(template_path)
+    else
+      config_path = "config/types/#{type}/config.yml"
+      if File.exists?(config_path) &&
+          (type_config = YAML.load_file(config_path)) &&
+          type_config[:inherit]
+        return get(type_config[:inherit], output_type, name)
+      else
+        raise "Template not found at: #{template_path}"
+      end
+    end
+  end
+
+  def initialize(path)
+    @template = path
+  end
+
+  def run(context, params={})
+    template = File.read(@template)
+    eruby = Erubis::Eruby.new(template)
+    output = eruby.result(context.get_binding(params))
+    return Render::Output.new(output)
+  end
+end
+
+class Render::File
+  attr_reader :path
+  def initialize(path)
+    @path = path
+  end
+
+  def format
+    :pivot # ???
+  end
+
+  def data
+    File.read(@path)
+  end
+end
+
+class Render::Output
+  attr_reader :data
+  def initialize(output_data)
+    @data = output_data
+  end
+
+  def path
+    # FIXME: serialize to temp path
+  end
+
+  def write_to(path)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.open(path, 'w') {|f| f.write(@data)}
+  end
+end
+
+class Render::Context
+  def initialize(work, output_type)
+    @work = work
+    # FIXME: hack!
+    @output_type = output_type
+  end
+
+  def add_filter(&block)
+    @filters ||= []
+    @filters << block
+  end
+
+  def render_string(s, options={})
+    # FIXME: do something?
+    # FIXME: other separator, & ?
+    s = render_string(s.join(', ')) if s.is_a?(Array)
+    # FIXME: ad-hoc, and language-specific
+    if options[:de_article]
+      case s
+      when /^[aeiou]/
+        # FIXME: apostrophe!!
+        s = "de l'#{s}"
+      else
+        s = "du #{s}"
+      end
+    end
+    apply_filters(s)
+  end
+
+  def render_date(d, format)
+    I18n.localize(d, :format => format) if d
+  end
+
+  def call_template(name, work=nil)
+    if work
+      template = Render::Template.get(work.metadata[:type], @output_type, name)
+      context = Render::Context.new(work, @output_type)
+      context.filters = @filters if @filters
+      # FIXME: fiddly condition
+      params = (@params || {}).merge({:as_chapter => work != @work})
+      template.run(context, params)
+    else
+      template = Render::Template.get(@work.metadata[:type], @output_type, name)
+      # template.run(self)
+      # FIXME: awkward param inheritance/forwarding
+      params = @params || {}
+      template.run(self, params)
+    end
+  end
+
+  def render_template(name, work=nil)
+    call_template(name, work).data
+  end
+
+  def options
+    # FIXME: hack!
+    type = @work.metadata[:type]
+    options_file = "config/types/#{type}/#{@output_type}/options.yml"
+    if File.exists?(options_file)
+      return YAML.load_file("config/types/#{type}/#{@output_type}/options.yml")
+    else
+      return {}
+    end
+  end
+
+  def toc
+    @work.toc
+  end
+
+  def content(part, params={})
+    content = @work.content(part) or raise "Missing content '#{part}' for #{@work.title}"
+    converter = Converter.get(content.format, @output_type)
+    converted_output = apply_filters(converter.run(content.data, params))
+    return Render::Output.new(converted_output)
+  end
+
+  def content?(part)
+    !@work.content(part).nil?
+  end
+
+  def metadata
+    @work.metadata
+  end
+
+  attr_reader :params
+  def get_binding(params={})
+    # FIXME: arg, not reentrant
+    @params = params
+    binding()
+  end
+
+  protected
+  def filters=(filters)
+    @filters = filters
+  end
+  def apply_filters(string)
+    (@filters || []).inject(string) {|s, f| f.call(s)} if string
+  end
+end
+
+
+class Metadata
+  def initialize(file)
+    if File.exists?(file)
+      @metadata = YAML.load_file(file)
+    else
+      @metadata = {}
+    end
+  end
+
+  def merge(more)
+    @metadata.merge(more)
+  end
+
+  def [](key)
+    @metadata[key]
+  end
+end
+
+class Tree
+  def initialize(root)
+    @root = root
+  end
+
+  def content_file(name)
+    # FIXME: lookup in known hash?
+    # FIXME: determine extension?
+    filename = "#{@root}/#{name}.html"
+    Render::File.new(filename) if File.exists?(filename)
+  end
+
+  def metadata_file
+    "#{@root}/metadata.yml"
+  end
+
+  def export_directory
+    "#{@root}/output"
+  end
+
+  def backup_directory
+    "#{@root}/backups"
+  end
+end
+
+class Work
+  attr_reader :dest, :metadata
+  def initialize(path, metadata={})
+# FIXME: ensure valid, ensure enough metadata
+    @path = path
+    @tree = Tree.new(path)
+    @dest = @tree.export_directory
+    @metadata = Metadata.new(@tree.metadata_file).merge(metadata)
+  end
+
+  def content(name)
+    @tree.content_file(name)
+  end
+
+  def output_name
+    # FIXME: fold accents, remove special chars
+    # "àáâãäå".chars.normalize(:kd).gsub(/[^\x00-\x7F]/n,'').downcase.to_s
+    # http://stackoverflow.com/questions/225471/how-do-i-replace-accented-latin-characters-in-ruby
+    # title.downcase.gsub(' ', '_')
+    File.basename(@path)
+  end
+
+  def toc
+    # FIXME: default to [self]?  make Work objects for chapters?
+    @toc = (self[:toc] || []).map do |file|
+      Work.new("#{@path}/#{file}")
+    end
+    @toc = [self] if @toc.empty?
+    @toc
+  end
+
+  def title
+    self[:title]
+  end
+
+  def authors
+    [*self[:author]].compact
+  end
+
+  def translators
+    [*self[:translator]].compact
+  end
+
+  def publisher
+  end
+
+  def publication_date
+  end
+
+  def identifiers
+    self[:identifiers] || {}
+  end
+
+  def language
+  end
+
+  def rights
+  end
+
+  def [](key)
+    @metadata[key]
+  end
+end
+
+
+class BuildEnv
+  def self.run(env_base=nil, &block)
+    env = new(env_base)
+    env.instance_eval(&block)
+    env.cleanup
+  end
+
+  def import(resource, options={})
+    dest_filename = options[:as] || File.basename(resource.path)
+    dest_path = "#{@work_dir}/#{dest_filename}"
+    throw "'#{dest_path}' already exists!" if File.exists?(dest_path) && !options[:force]
+    resource.write_to(dest_path)
+  end
+
+  def execute(command)
+    Dir.chdir(@work_dir) do
+      system(command)
+    end
+  end
+
+  def export(source_filename, dest_path, options={})
+    throw "'#{dest_path}' already exists!" if File.exists?(dest_path) && !options[:force]
+# FIXME: option to backup existing
+    FileUtils.mkdir_p(File.dirname(dest_path))
+    source_file = "#{@work_dir}/#{source_filename}"
+    FileUtils.copy(source_file, dest_path)
+  end
+
+  # FIXME: private?
+  def cleanup
+    # rm -rf @work_dir
+  end
+
+  private
+  def initialize(env_base)
+    unique = (rand * 100000).to_i
+    @work_dir = "tmp/build-#{unique}"
+    if env_base
+      FileUtils.mkdir_p(File.dirname(@work_dir))
+      FileUtils.cp_r("config/build_env/#{env_base}", @work_dir)
+    else
+      FileUtils.mkdir_p(@work_dir)
+    end
+  end
+end
+
+class Export
+  def initialize(work, extension)
+    @work = work
+    @extension = extension
+# TODO: Format class, manages extensions, etc
+    filename = work.output_name
+    @file = "#{work.dest}/#{filename}.#{@extension}"
+  end
+end
+
+class Export::Epub < Export
+  def initialize(work)
+    super(work, 'epub')
+  end
+
+  def write
+    work = @work
+
+# fiction:
+# - title page
+# - content
+# - (colophon)
+
+# issue:
+# * cover page
+# * ours
+# - TOC
+# - editorial
+# - for each story:
+#   + title page
+#   + content
+#   + interview
+# * colophon
+
+    dest = @file
+    context = Render::Context.new(@work, 'epub')
+
+    BuildEnv.run('epub') do |env|
+
+      nav_list = []
+      file_list = []
+
+      file_list << {"images/anglemort.jpg" => 'content/images'}
+      file_list << {"style/angle.css"      => 'content/style'}
+
+      options = context.options
+
+      # add any initial pages
+      (options[:before_pages] || []).each do |page_file|
+        page_doc = context.call_template(page_file)
+        env.import page_doc, :as => "content/#{page_file}"
+        file_list << {"content/#{page_file}" => 'content'}
+      end
+
+      # FIXME: add couverture in TOC
+
+      p work.toc
+      work.toc.map do |chapter|
+        # FIXME: the chapter type defines what templates to execute
+        # e.g. title/content for fiction, content for edito/itw
+        # chapter_templates = ['title', 'text']
+        # FIXME: don't hardcode!
+        chapter_templates = case chapter.metadata[:type]
+          when 'fiction'
+            ['title', 'text']
+          when 'editorial', 'interview'
+            ['text']
+          end
+        chapter_files = []
+        chapter_templates.each do |name|
+          template_file = "#{name}.html"
+          html_doc = context.call_template(template_file, chapter)
+
+          # write to file
+          file = "content/#{chapter.output_name}-#{name}.html"
+          env.import html_doc, :as => file
+
+          chapter_files << {file => 'content'}
+        end
+        # FIXME: numbering?
+        # FIXME: config format title based on type, not hardcoded here
+        title = case chapter.metadata[:type]
+          when 'fiction'
+            "#{context.render_string(chapter.title)} — #{context.render_string(chapter.authors)}"
+          when 'interview'
+            "Édito : #{context.render_string(chapter.title)}"
+          when 'editorial'
+            "Interview : #{context.render_string(chapter.title)}"
+          end
+        first_chapter_file = chapter_files.first.keys.first
+
+        nav_list << {:label => title, :content => first_chapter_file}
+        file_list << chapter_files
+      end
+
+      # add any final pages
+      (options[:after_pages] || []).each do |page_file|
+        page_doc = context.call_template(page_file)
+        env.import page_doc, :as => "content/#{page_file}"
+        file_list << {"content/#{page_file}" => 'content'}
+      end
+
+      file_list.flatten!
+
+      file_list.map! do |pair|
+        key = pair.keys.first
+        {"#{@work_dir}/#{key}" => pair[key]}
+      end
+
+      p file_list
+      p nav_list
+
+      epub = EeePub.make do
+        title       work.title
+        work.authors.each do |author|
+          creator   author
+        end
+        # FIXME: proper creator roles
+        # work.authors.each do |author|
+        #   creator   author, :role => 'aut'
+        # end
+        # work.translators.each do |translator|
+        #   creator   translator, :role => 'trl'
+        # end
+        publisher   context.render_string(work.metadata[:publisher])
+        date        context.render_date(work.metadata[:publication_date], '%Y-%m-%d')
+        work.identifiers.each do |scheme, identifier|
+          identifier  identifier, :scheme => scheme
+        end
+        language    work.language if work.language
+        # FIXME: proper rights, identifiers
+        #  rights    work.rights
+        #  uid       work.uid ?
+
+        files file_list
+        nav   nav_list
+      end
+      epub.save(dest)
+    end
+
+  end
+end
+
+class Export::PDF < Export
+  def initialize(work)
+    super(work, 'pdf')
+  end
+
+  def write
+    context = Render::Context.new(@work, 'latex')
+    context.add_filter do |text|
+      # convert unicode into LaTeX code
+      text.
+        gsub(/ ([!?:;])/, '\1'). # strip punctuation nbsp, done by LaTeX
+        gsub(' ', '~').
+        gsub('–', '--'). #endash
+        gsub('…', '\ldots\ ').
+        gsub('€', '{\euro}').
+        gsub('$', '\$')
+    #   text.gsub!('«', '<<')
+    #   text.gsub!('»', '>>')
+    #   # FIXME: entities shouldn't happen...
+    #   text.gsub!('&amp;', '\&') # or & ?
+    #   text.gsub!('&quot;', '"')
+    end
+
+    latex_doc = context.call_template('document.tex')
+
+    # template.add_post_filter do |text|
+    #   # FIXME: aah, this is text now!
+    #   # text.gsub!('&quot;', '"')
+    #   # text.gsub!('&amp;', '\&')
+    #   # FIXME: post else converted to entity..
+    #   text.gsub!('«', '<<')
+    #   text.gsub!('»', '>>')
+    # end
+
+    dest = @file
+    BuildEnv.run('pdflatex') do |env|
+      env.import latex_doc, :as => 'document.tex'
+      env.execute 'pdflatex document.tex'
+      env.execute 'pdflatex document.tex'
+      env.export 'document.pdf', dest, :force => true
+    end
+  end
+end
+
+class Export::Wordpress < Export
+  def initialize(work)
+    super(work, 'html')
+  end
+
+  def write
+    context = Render::Context.new(@work, 'wordpress')
+    wordpress_doc = context.call_template('document.html')
+    wordpress_doc.write_to(@file)
+  end
+end
+
+
+
+unless (work_path = ARGV[0]) && File.exists?(work_path) && format = ARGV[1]
+  puts "usage: hypermonk2 <workdir> <format>"
+  exit(0)
+end
+
+export_class = 
+  case format
+  when 'pdf'       then Export::PDF
+  when 'epub'      then Export::Epub
+  when 'wordpress' then Export::Wordpress
+  end
+
+work = Work.new(work_path)
+export = export_class.new(work)
+export.write
