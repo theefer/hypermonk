@@ -154,7 +154,7 @@ class Render::Context
   def render_string(s, options={})
     # FIXME: do something?
     # FIXME: other separator, & ?
-    s = render_string(s.join(', ')) if s.is_a?(Array)
+    s = render_string(s.join(' et ')) if s.is_a?(Array)
     # FIXME: ad-hoc, and language-specific
     if options[:de_article]
       case s
@@ -552,7 +552,11 @@ class Export::PDF < Export
         gsub('–', '--'). #endash
         gsub('…', '\ldots\ ').
         gsub('€', '{\euro}').
-        gsub('$', '\$')
+        gsub('$', '\$').
+        gsub('%', '\%'). # not a comment
+        gsub("\302\255", '\-'). # UTF-8 soft-hyphen
+        gsub('\ ~', '~') # non-breaking wins
+
     #   text.gsub!('«', '<<')
     #   text.gsub!('»', '>>')
     #   # FIXME: entities shouldn't happen...
