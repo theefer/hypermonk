@@ -140,10 +140,11 @@ class Render::Output
 end
 
 class Render::Context
-  def initialize(work, output_type)
+  def initialize(work, output_type, extension=nil)
     @work = work
     # FIXME: hack!
     @output_type = output_type
+    @extension   = extension
   end
 
   def add_filter(&block)
@@ -221,6 +222,16 @@ class Render::Context
 
   def metadata
     @work.metadata
+  end
+
+  # FIXME: hack to intercept type-dependent identifiers
+  def identifiers
+    ids = @work.identifiers.map do |key, val|
+      # FIXME: hardcoded hack
+      val = val[@extension && @extension.to_sym] if key == :isbn
+      [key, val] if val
+    end
+    Hash[ *ids.compact.flatten ]
   end
 
   attr_reader :params
@@ -429,7 +440,7 @@ class Export::Epub < Export
 # * colophon
 
     dest = @file
-    context = Render::Context.new(@work, 'epub')
+    context = Render::Context.new(@work, 'epub', @extension)
 
     BuildEnv.run('epub') do |env|
 
@@ -479,9 +490,9 @@ class Export::Epub < Export
           when 'fiction'
             "#{context.render_string(chapter.title)} — #{context.render_string(chapter.authors)}"
           when 'interview'
-            "Édito : #{context.render_string(chapter.title)}"
-          when 'editorial'
             "Interview : #{context.render_string(chapter.title)}"
+          when 'editorial'
+            "Édito : #{context.render_string(chapter.title)}"
           end
         first_chapter_file = chapter_files.first.keys.first
 
@@ -520,7 +531,8 @@ class Export::Epub < Export
         # end
         publisher   context.render_string(work.metadata[:publisher])
         date        context.render_date(work.metadata[:publication_date], '%Y-%m-%d')
-        work.identifiers.each do |scheme, identifier|
+        # work.identifiers.each do |scheme, identifier|
+        context.identifiers.each do |scheme, identifier|
           identifier  identifier, :scheme => scheme
         end
         language    work.language if work.language
@@ -543,7 +555,7 @@ class Export::PDF < Export
   end
 
   def write
-    context = Render::Context.new(@work, 'latex')
+    context = Render::Context.new(@work, 'latex', @extension)
     context.add_filter do |text|
       # convert unicode into LaTeX code
       text.
@@ -552,6 +564,7 @@ class Export::PDF < Export
         gsub('–', '--'). #endash
         gsub('…', '\ldots\ ').
         gsub('€', '{\euro}').
+        gsub('œ', '{\oe}'). # FIXME: needed?
         gsub('$', '\$').
         gsub('%', '\%'). # not a comment
         gsub("\302\255", '\-'). # UTF-8 soft-hyphen
@@ -565,6 +578,11 @@ class Export::PDF < Export
     end
 
     latex_doc = context.call_template('document.tex')
+        # gsub(/\epigraph\{(.*)\}\{(.*)\}/m) do ||
+        #   e1 = $1; e2 = $2
+        #   e1.gsub!("\n", ''); e2.gsub!("\n", '')
+        #   "\epigraph{#{e1}}{#{e2}}"
+        # end.
 
     # template.add_post_filter do |text|
     #   # FIXME: aah, this is text now!
