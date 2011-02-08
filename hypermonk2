@@ -2,22 +2,20 @@
 # -*- coding: utf-8 -*-
 
 # TODO
-# * backup all this shit
-# * final ours/colophon
-# + type-specific identifiers (ISBN)
-# + generate issue 2
-# - remerciements?
-# - generate issue 1
+# * generate issue 1
+# * runtime arguments:
+#   + marketing variants (ePagine)
+# * cleaner type-specific identifiers (ISBN), work for mobi (via epub)
+# + Config overlays (incl. repository wide config, per type config(?), etc)
+# - cleaner custom/fuller epub title (w/ publisher)
+# - cleaner custom pretty titles depending on type (epub TOC, epub+pdf TOC/chapters)
 # - original publication support in Wordpress, else append
 # - add cover to epub TOC
-# - add TOC page in epub?
-# - runtime arguments:
-#   - marketing variants (ePagine)
 # - use proper generated file names
 # - cleanup the mess
-# - cleaner custom pretty titles depending on type (epub TOC, epub+pdf TOC/chapters)
 # - format-specific render_*
-# . generate Kindle .mobi
+# - proper uid metadata
+# . Infer authors from chapters (broken, unless filtered)
 # . generate browsable HTML version
 
 
@@ -317,12 +315,13 @@ class Work
   end
 
   def toc
-    # FIXME: default to [self]?  make Work objects for chapters?
-    @toc = (self[:toc] || []).map do |file|
-      Work.new("#{@path}/#{file}")
+    @toc ||= begin
+      if self[:toc] && !self[:toc].empty?
+        self[:toc].map {|file| Work.new("#{@path}/#{file}")}
+      else
+        [self]
+      end
     end
-    @toc = [self] if @toc.empty?
-    @toc
   end
 
   def title
@@ -338,9 +337,11 @@ class Work
   end
 
   def publisher
+    self[:publisher]
   end
 
   def publication_date
+    self[:publication_date]
   end
 
   def identifiers
@@ -348,9 +349,12 @@ class Work
   end
 
   def language
+    self[:language]
   end
 
   def rights
+    license = self[:license]
+    license && (license[:text] || license[:name])
   end
 
   def [](key)
@@ -406,39 +410,24 @@ class BuildEnv
 end
 
 class Export
-  def initialize(work, extension)
+  def initialize(work, extension, output_file=nil)
     @work = work
     @extension = extension
 # TODO: Format class, manages extensions, etc
-    filename = work.output_name
-    @file = "#{work.dest}/#{filename}.#{@extension}"
+    @file = output_file || begin
+      filename = work.output_name
+      "#{work.dest}/#{filename}.#{@extension}"
+    end
   end
 end
 
 class Export::Epub < Export
-  def initialize(work)
-    super(work, 'epub')
+  def initialize(work, output_file=nil)
+    super(work, 'epub', output_file)
   end
 
   def write
     work = @work
-
-# fiction:
-# - title page
-# - content
-# - (colophon)
-
-# issue:
-# * cover page
-# * ours
-# - TOC
-# - editorial
-# - for each story:
-#   + title page
-#   + content
-#   + interview
-# * colophon
-
     dest = @file
     context = Render::Context.new(@work, 'epub', @extension)
 
@@ -518,27 +507,28 @@ class Export::Epub < Export
       p nav_list
 
       epub = EeePub.make do
-        title       work.title
-        work.authors.each do |author|
-          creator   author
+        # FIXME: custom filter/parse, based on type
+        if work.metadata[:title_prefix_publisher]
+          title     "#{work.publisher} – #{work.title}"
+        else
+          title     work.title
         end
-        # FIXME: proper creator roles
-        # work.authors.each do |author|
-        #   creator   author, :role => 'aut'
-        # end
-        # work.translators.each do |translator|
-        #   creator   translator, :role => 'trl'
-        # end
-        publisher   context.render_string(work.metadata[:publisher])
+        work.authors.each do |author|
+          creator   author, :role => 'aut'
+        end
+        work.translators.each do |translator|
+          creator   translator, :role => 'trl'
+        end
+        # FIXME: more roles http://www.loc.gov/marc/relators/relaterm.html
+        publisher   context.render_string(work.publisher)
         date        context.render_date(work.metadata[:publication_date], '%Y-%m-%d')
-        # work.identifiers.each do |scheme, identifier|
         context.identifiers.each do |scheme, identifier|
           identifier  identifier, :scheme => scheme
         end
         language    work.language if work.language
-        # FIXME: proper rights, identifiers
-        #  rights    work.rights
-        #  uid       work.uid ?
+        rights      work.rights if work.rights
+        # FIXME: use epub spec for UIDs instead
+        uid         context.identifiers[:isbn]
 
         files file_list
         nav   nav_list
