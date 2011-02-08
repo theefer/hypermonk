@@ -593,6 +593,28 @@ class Export::PDF < Export
   end
 end
 
+class Export::Mobi < Export
+  def initialize(work)
+    super(work, 'mobi')
+    @tmp_file = '/tmp/build.epub'
+    @epub_export = Export::Epub.new(work, @tmp_file)
+  end
+
+  def write
+    @epub_export.write
+    epub_doc = Render::Output.new(File.read(@tmp_file))
+    # FIXME: less hacky
+    # FIXME: needs to use correct ISBN variant...
+
+    dest = @file
+    BuildEnv.run do |env|
+      env.import epub_doc, :as => 'document.epub'
+      env.execute 'ebook-convert document.epub document.mobi'
+      env.export 'document.mobi', dest, :force => true
+    end
+  end
+end
+
 class Export::Wordpress < Export
   def initialize(work)
     super(work, 'html')
@@ -616,6 +638,7 @@ export_class =
   case format
   when 'pdf'       then Export::PDF
   when 'epub'      then Export::Epub
+  when 'mobi'      then Export::Mobi
   when 'wordpress' then Export::Wordpress
   end
 
