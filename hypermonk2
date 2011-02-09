@@ -5,8 +5,10 @@
 # * generate issue 1
 # * runtime arguments:
 #   + marketing variants (ePagine)
-# * cleaner type-specific identifiers (ISBN), work for mobi (via epub)
 # + Config overlays (incl. repository wide config, per type config(?), etc)
+# + Clean: context vs work
+# + Clean: output_type vs extension vs format vs ...
+# + Clean: export.write to file, more malleable Resource, etc (mobi)
 # - cleaner custom/fuller epub title (w/ publisher)
 # - cleaner custom pretty titles depending on type (epub TOC, epub+pdf TOC/chapters)
 # - original publication support in Wordpress, else append
@@ -15,6 +17,7 @@
 # - cleanup the mess
 # - format-specific render_*
 # - proper uid metadata
+# . illustration metadata
 # . Infer authors from chapters (broken, unless filtered)
 # . generate browsable HTML version
 
@@ -137,7 +140,19 @@ class Render::Output
   end
 end
 
+class FormatSpecific
+  def initialize(map)
+    @map = map
+  end
+  def render(context)
+    @map[context.extension.intern]
+  end
+end
+YAML.add_ruby_type('by_format') {|type, val| FormatSpecific.new(val)}
+
 class Render::Context
+  attr_reader :extension
+
   def initialize(work, output_type, extension=nil)
     @work = work
     # FIXME: hack!
@@ -153,6 +168,8 @@ class Render::Context
   def render_string(s, options={})
     # FIXME: do something?
     # FIXME: other separator, & ?
+    s = s.render(self) if s.respond_to?(:render)
+
     s = render_string(s.join(' et ')) if s.is_a?(Array)
     # FIXME: ad-hoc, and language-specific
     if options[:de_article]
@@ -171,19 +188,19 @@ class Render::Context
     I18n.localize(d, :format => format) if d
   end
 
-  def call_template(name, work=nil)
+  def call_template(name, work=nil, extra_params={})
     if work
       template = Render::Template.get(work.metadata[:type], @output_type, name)
       context = Render::Context.new(work, @output_type)
       context.filters = @filters if @filters
       # FIXME: fiddly condition
-      params = (@params || {}).merge({:as_chapter => work != @work})
+      params = (@params || {}).merge(extra_params).merge({:as_chapter => work != @work})
       template.run(context, params)
     else
       template = Render::Template.get(@work.metadata[:type], @output_type, name)
       # template.run(self)
       # FIXME: awkward param inheritance/forwarding
-      params = @params || {}
+      params = (@params || {}).merge(extra_params)
       template.run(self, params)
     end
   end
@@ -222,14 +239,8 @@ class Render::Context
     @work.metadata
   end
 
-  # FIXME: hack to intercept type-dependent identifiers
   def identifiers
-    ids = @work.identifiers.map do |key, val|
-      # FIXME: hardcoded hack
-      val = val[@extension && @extension.to_sym] if key == :isbn
-      [key, val] if val
-    end
-    Hash[ *ids.compact.flatten ]
+    @work.identifiers
   end
 
   attr_reader :params
@@ -419,6 +430,11 @@ class Export
       "#{work.dest}/#{filename}.#{@extension}"
     end
   end
+
+  # FIXME: hack to let mobi use epub
+  def override_extension!(ext)
+    @extension = ext
+  end
 end
 
 class Export::Epub < Export
@@ -426,7 +442,7 @@ class Export::Epub < Export
     super(work, 'epub', output_file)
   end
 
-  def write
+  def write(params={})
     work = @work
     dest = @file
     context = Render::Context.new(@work, 'epub', @extension)
@@ -443,7 +459,7 @@ class Export::Epub < Export
 
       # add any initial pages
       (options[:before_pages] || []).each do |page_file|
-        page_doc = context.call_template(page_file)
+        page_doc = context.call_template(page_file, nil, params)
         env.import page_doc, :as => "content/#{page_file}"
         file_list << {"content/#{page_file}" => 'content'}
       end
@@ -462,10 +478,16 @@ class Export::Epub < Export
           when 'editorial', 'interview'
             ['text']
           end
+
+        if params[:marketing]
+          # FIXME: only if content?(("marketing-#{params[:marketing]}"))
+          chapter_templates << "marketing"
+        end
+
         chapter_files = []
         chapter_templates.each do |name|
           template_file = "#{name}.html"
-          html_doc = context.call_template(template_file, chapter)
+          html_doc = context.call_template(template_file, chapter, params)
 
           # write to file
           file = "content/#{chapter.output_name}-#{name}.html"
@@ -491,7 +513,7 @@ class Export::Epub < Export
 
       # add any final pages
       (options[:after_pages] || []).each do |page_file|
-        page_doc = context.call_template(page_file)
+        page_doc = context.call_template(page_file, nil, params)
         env.import page_doc, :as => "content/#{page_file}"
         file_list << {"content/#{page_file}" => 'content'}
       end
@@ -544,7 +566,7 @@ class Export::PDF < Export
     super(work, 'pdf')
   end
 
-  def write
+  def write(params={})
     context = Render::Context.new(@work, 'latex', @extension)
     context.add_filter do |text|
       # convert unicode into LaTeX code
@@ -567,7 +589,7 @@ class Export::PDF < Export
     #   text.gsub!('&quot;', '"')
     end
 
-    latex_doc = context.call_template('document.tex')
+    latex_doc = context.call_template('document.tex', nil, params)
         # gsub(/\epigraph\{(.*)\}\{(.*)\}/m) do ||
         #   e1 = $1; e2 = $2
         #   e1.gsub!("\n", ''); e2.gsub!("\n", '')
@@ -598,10 +620,11 @@ class Export::Mobi < Export
     super(work, 'mobi')
     @tmp_file = '/tmp/build.epub'
     @epub_export = Export::Epub.new(work, @tmp_file)
+    @epub_export.override_extension!('mobi')
   end
 
-  def write
-    @epub_export.write
+  def write(params={})
+    @epub_export.write(params)
     epub_doc = Render::Output.new(File.read(@tmp_file))
     # FIXME: less hacky
     # FIXME: needs to use correct ISBN variant...
@@ -620,9 +643,9 @@ class Export::Wordpress < Export
     super(work, 'html')
   end
 
-  def write
+  def write(params={})
     context = Render::Context.new(@work, 'wordpress')
-    wordpress_doc = context.call_template('document.html')
+    wordpress_doc = context.call_template('document.html', nil, params)
     wordpress_doc.write_to(@file)
   end
 end
@@ -630,9 +653,11 @@ end
 
 
 unless (work_path = ARGV[0]) && File.exists?(work_path) && format = ARGV[1]
-  puts "usage: hypermonk2 <workdir> <format>"
+  puts "usage: hypermonk2 <workdir> <format> [options]"
   exit(0)
 end
+
+inline_params = Hash[ARGV[2..-1].map {|s| pair = s.split('='); [pair[0].intern, pair[1]]}]
 
 export_class = 
   case format
@@ -644,4 +669,4 @@ export_class =
 
 work = Work.new(work_path)
 export = export_class.new(work)
-export.write
+export.write(inline_params)
