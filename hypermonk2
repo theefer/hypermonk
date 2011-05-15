@@ -535,6 +535,10 @@ class Export::Epub < Export
         else
           title     work.title
         end
+        # HACK to work around silly epub readers
+        if work.metadata[:prepend_publisher_as_author_in_epub]
+          creator   work.publisher, :role => 'aut'
+        end
         work.authors.each do |author|
           creator   author, :role => 'aut'
         end
