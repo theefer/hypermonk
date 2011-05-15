@@ -583,8 +583,11 @@ class Export::PDF < Export
         gsub('œ', '{\oe}'). # FIXME: needed?
         gsub('$', '\$').
         gsub('%', '\%'). # not a comment
+        gsub('°', '\textdegree').
+        gsub('#', '\#').
         gsub("\302\255", '\-'). # UTF-8 soft-hyphen
-        gsub('\ ~', '~') # non-breaking wins
+        gsub('\ ~', '~'). # non-breaking wins
+        gsub('&', '\\\\&') # ???
 
     #   text.gsub!('«', '<<')
     #   text.gsub!('»', '>>')
