@@ -17,6 +17,7 @@
 # - cleanup the mess
 # - format-specific render_*
 # - proper uid metadata
+# - only include resources once
 # . illustration metadata
 # . Infer authors from chapters (broken, unless filtered)
 # . generate browsable HTML version
@@ -140,6 +141,22 @@ class Render::Output
   end
 end
 
+class Render::Resource
+  attr_reader :path
+  def initialize(path)
+    @path = path
+  end
+
+  def data
+    File.read(@path)
+  end
+
+  def write_to(path)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.open(path, 'w') {|f| f.write(data)}
+  end
+end
+
 class FormatSpecific
   def initialize(map)
     @map = map
@@ -151,13 +168,14 @@ end
 YAML.add_ruby_type('by_format') {|type, val| FormatSpecific.new(val)}
 
 class Render::Context
-  attr_reader :extension
+  attr_reader :extension, :imported_resources
 
   def initialize(work, output_type, extension=nil)
     @work = work
     # FIXME: hack!
     @output_type = output_type
     @extension   = extension
+    @imported_resources = []
   end
 
   def add_filter(&block)
@@ -188,6 +206,17 @@ class Render::Context
     I18n.localize(d, :format => format) if d
   end
 
+  def path_to(filepath)
+    file = @work.path(filepath)
+    if File.exists?(file)
+      imported_resources << Render::Resource.new(file)
+      # FIXME: hacky path
+      return "resources/#{filepath}"
+    else
+      raise "cannot find file #{filepath}"
+    end
+  end
+
   def call_template(name, work=nil, extra_params={})
     if work
       template = Render::Template.get(work.metadata[:type], @output_type, name)
@@ -195,7 +224,10 @@ class Render::Context
       context.filters = @filters if @filters
       # FIXME: fiddly condition
       params = (@params || {}).merge(extra_params).merge({:as_chapter => work != @work})
-      template.run(context, params)
+      out = template.run(context, params)
+      # FIXME: merge imported resources from subcontexts
+      @imported_resources += context.imported_resources
+      out
     else
       template = Render::Template.get(@work.metadata[:type], @output_type, name)
       # template.run(self)
@@ -283,10 +315,14 @@ class Tree
     @root = root
   end
 
+  def path(filepath)
+    "#{@root}/#{filepath}"
+  end
+
   def content_file(name)
     # FIXME: lookup in known hash?
     # FIXME: determine extension?
-    filename = "#{@root}/#{name}.html"
+    filename = path("#{name}.html")
     Render::File.new(filename) if File.exists?(filename)
   end
 
@@ -311,6 +347,10 @@ class Work
     @tree = Tree.new(path)
     @dest = @tree.export_directory
     @metadata = Metadata.new(@tree.metadata_file).merge(metadata)
+  end
+
+  def path(filepath)
+    @tree.path(filepath)
   end
 
   def content(name)
@@ -512,10 +552,23 @@ class Export::Epub < Export
       end
 
       # add any final pages
-      (options[:after_pages] || []).each do |page_file|
+      (options[:after_pages] || []).each do |page|
+        page_file = page.is_a?(String) ? page : page[:file]
         page_doc = context.call_template(page_file, nil, params)
-        env.import page_doc, :as => "content/#{page_file}"
-        file_list << {"content/#{page_file}" => 'content'}
+        file = "content/#{page_file}"
+        env.import page_doc, :as => file
+        file_list << {file => 'content'}
+        if page.is_a?(Hash) && page_label = page[:label]
+          nav_list << {:label => page_label, :content => file}
+        end
+      end
+
+      context.imported_resources.each do |res|
+        # FIXME: preserve Dirname/path?
+        puts "import #{res.path}"
+        res_path = "content/resources/#{File.basename(res.path)}"
+        env.import res, :as => res_path
+        file_list << {res_path => 'content/resources'}
       end
 
       file_list.flatten!
@@ -614,6 +667,15 @@ class Export::PDF < Export
 
     dest = @file
     BuildEnv.run('pdflatex') do |env|
+
+      # FIXME: auto import as part of BuildEnv?
+      context.imported_resources.each do |res|
+        # FIXME: preserve Dirname/path?
+        puts "import #{res.path}"
+        res_path = "resources/#{File.basename(res.path)}"
+        env.import res, :as => res_path
+      end
+
       env.import latex_doc, :as => 'document.tex'
       env.execute 'pdflatex document.tex'
       env.execute 'pdflatex document.tex'
