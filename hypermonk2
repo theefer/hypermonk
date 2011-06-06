@@ -487,41 +487,52 @@ class Export::Epub < Export
     dest = @file
     context = Render::Context.new(@work, 'epub', @extension)
 
+    # FIXME: eeepub craps out if dest exists
+    File.unlink(dest) if File.exists?(dest)
+
     BuildEnv.run('epub') do |env|
 
       nav_list = []
       file_list = []
 
-      file_list << {"images/anglemort.jpg" => 'content/images'}
+      # FIXME: import as resource from config?
+      # file_list << {"images/anglemort.jpg" => 'content/images'}
+      file_list << {"images/end_square.jpg" => 'content/images'}
       file_list << {"style/angle.css"      => 'content/style'}
 
       options = context.options
 
       # add any initial pages
-      (options[:before_pages] || []).each do |page_file|
+      (options[:before_pages] || []).each do |page|
+        page_file = page.is_a?(String) ? page : page[:file]
         page_doc = context.call_template(page_file, nil, params)
-        env.import page_doc, :as => "content/#{page_file}"
-        file_list << {"content/#{page_file}" => 'content'}
+        file = "content/#{page_file}"
+        env.import page_doc, :as => file
+        file_list << {file => 'content'}
+        if page.is_a?(Hash) && page_label = page[:label]
+          nav_list << {:label => page_label, :content => file}
+        end
       end
 
-      # FIXME: add couverture in TOC
-
-      p work.toc
       work.toc.map do |chapter|
-        # FIXME: the chapter type defines what templates to execute
-        # e.g. title/content for fiction, content for edito/itw
-        # chapter_templates = ['title', 'text']
-        # FIXME: don't hardcode!
-        chapter_templates = case chapter.metadata[:type]
-          when 'fiction'
-            ['title', 'text']
-          when 'editorial', 'interview'
-            ['text']
-          end
+        # by default, just build 'text.html' template
+        chapter_templates = ['text']
 
+        # FIXME: ad-hoc
         if params[:marketing]
           # FIXME: only if content?(("marketing-#{params[:marketing]}"))
           chapter_templates << "marketing"
+        end
+
+        # FIXME: hack to let parent type define after/before pages for sub-chapters
+        chapter_type = chapter.metadata[:type].to_sym
+        if chapter_options = (options[:chapter_options] && options[:chapter_options][chapter_type])
+          if before = chapter_options[:before_pages]
+            chapter_templates = before.map{|p| p.gsub(/.html$/, '')} + chapter_templates
+          end
+          if after = chapter_options[:after_pages]
+            chapter_templates = chapter_templates + after.map{|p| p.gsub(/.html$/, '')}
+          end
         end
 
         chapter_files = []
