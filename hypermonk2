@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 
 # TODO
-# * generate issue 1
 # * runtime arguments:
 #   + marketing variants (ePagine)
 # + Config overlays (incl. repository wide config, per type config(?), etc)
 # + Clean: context vs work
 # + Clean: output_type vs extension vs format vs ...
 # + Clean: export.write to file, more malleable Resource, etc (mobi)
+# + add TOC page to EPUB
 # - cleaner custom/fuller epub title (w/ publisher)
 # - cleaner custom pretty titles depending on type (epub TOC, epub+pdf TOC/chapters)
 # - original publication support in Wordpress, else append
