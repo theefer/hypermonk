@@ -613,7 +613,9 @@ class Export::Epub < Export
         publisher   context.render_string(work.publisher)
         date        context.render_date(work.metadata[:publication_date], '%Y-%m-%d')
         context.identifiers.each do |scheme, identifier|
-          identifier  context.render_string(identifier), :scheme => scheme
+          # FIXME: or option for "main" id?
+          id = (scheme == :isbn) ? 'BookId' : nil
+          identifier  context.render_string(identifier), :scheme => scheme, :id => id
         end
         language    work.language if work.language
         rights      work.rights if work.rights
