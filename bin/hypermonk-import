@@ -33,11 +33,7 @@ require 'i18n'
 #    "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
 
 
-module Hypermonk
-  VERSION = '0.1'
-end
-
-RESOURCE_ROOT = File.dirname(__FILE__) + '/resources'
+RESOURCE_ROOT = File.dirname(__FILE__) + '/../resources'
 
 module Pivot
 end
