@@ -35,6 +35,22 @@
   <p><xsl:apply-templates/></p>
 </xsl:template>
 
+<!-- replace empty para immediately preceded by a real para and later
+     succeeded with a real para by horizontal space -->
+<xsl:template match="para[normalize-space()='']">
+  <!-- FIXME: test that not an ellipsis para -->
+  <xsl:if test="preceding-sibling::para[position()=1][normalize-space()]
+                and
+                following-sibling::para[normalize-space()]">
+    <hr class="space"/>
+  </xsl:if>
+</xsl:template>
+
+<!-- replace ellipsis para with a horizontal separator -->
+<xsl:template match="para[normalize-space() = '* * *' or normalize-space() = '#']">
+  <hr/>
+</xsl:template>
+
 <xsl:template match="emphasis">
   <em><xsl:apply-templates/></em>
 </xsl:template>

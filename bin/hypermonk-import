@@ -139,9 +139,6 @@ class WordImporter
     opts = Nokogiri::XML::ParseOptions
     doc = Nokogiri::XML::Document.parse(xml, nil, 'UTF-8', opts::NOBLANKS)
 
-    # delete empty <para>
-    doc.root.xpath('//para[not(normalize-space())]').each {|e| e.remove}
-
     return doc
   end
 end
