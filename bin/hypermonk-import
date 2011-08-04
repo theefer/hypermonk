@@ -190,7 +190,7 @@ class DocbookTransformer
     text = text.gsub(/\s*([!?:;])/, ' \1') #nbsp
     text = text.gsub(/--+/, '–') #endash
 
-    text = text.gsub(/^—/, '–') # replace dialog (start-of-line) emdash by endash
+    text = text.gsub(/^–/, '—') # replace dialog (start-of-line) endash by emdash
     text = text.gsub(/"(.*)"/, '“\1”') # replace straight double quotes by curly quote pairs
     text = text.gsub(/'/, '’') # replace straight apostrophe by curly apostrophe
 
@@ -201,6 +201,7 @@ class DocbookTransformer
     # FIXME: or use unicode?
     # text = text.gsub(/[’']/, '&apos;')
     text = text.gsub('...', '…')
+    # FIXME: how to know when to use a ligature and when not to?
     text = text.gsub('oe', 'œ')
     text = text.gsub('Oe', 'Œ')
     text = text.gsub('OE', 'Œ')
