@@ -10,7 +10,8 @@ spec = Gem::Specification.new do |s|
   s.platform = Gem::Platform::RUBY
   s.authors = ['Sébastien Cevey']
   s.email = ["seb@cine7.net"]
-  s.summary = "A tool to compile textual documents into multiple output formats (EPUB, PDF, HTML, etc)"
+  s.summary = "document generator for EPUB, PDF, HTML, etc"
+  s.description = "A tool to compile textual documents into multiple output formats (EPUB, PDF, HTML, etc)"
 
   # s.add_development_dependency('rake')
   # s.add_development_dependency('minitest', '~> 2.1.0')
