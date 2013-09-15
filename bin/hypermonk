@@ -22,6 +22,27 @@
 # . Infer authors from chapters (broken, unless filtered)
 # . generate browsable HTML version
 
+# http://blog.threepress.org/2009/11/20/best-practices-in-epub-cover-images/
+
+# ALSO
+# - nbsp after/before «»
+
+# up to 1000px dimension
+
+# in OPF:
+# <item id="cover"       href="cover.html"    media-type="application/xhtml+xml"/>
+# <item id="cover-image" href="the_cover.jpg" media-type="image/jpeg"/>
+
+# <spine toc="ncxtoc">
+#  <itemref idref="cover" linear="no"/>
+#  <itemref idref="normal-first-content"/>
+
+# <meta name="cover" content="cover-image"/>
+
+# <guide>
+#  <reference href="cover.html" type="cover" title="Cover"/>
+
+
 
 require 'rubygems'
 require 'eeepub'
