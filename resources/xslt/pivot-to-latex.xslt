@@ -33,6 +33,7 @@
 
 % disable hyphenation
 %\usepackage[none]{hyphenat}
+\usepackage{hyphenat}
 
 \usepackage{graphicx}
 

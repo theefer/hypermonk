@@ -648,6 +648,7 @@ class Export::PDF < Export
         gsub('€', '{\euro}').
         gsub('œ', '{\oe}'). # FIXME: needed?
         gsub('$', '\$').
+        gsub('\\$', '$'). # FIXME: hack to keep \$
         gsub('%', '\%'). # not a comment
         gsub('°', '{\textdegree}').
         gsub('#', '\#').
