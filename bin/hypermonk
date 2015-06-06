@@ -186,7 +186,8 @@ class FormatSpecific
     @map[context.extension.intern]
   end
 end
-YAML.add_ruby_type('by_format') {|type, val| FormatSpecific.new(val)}
+# YAML.add_ruby_type('by_format') {|type, val| FormatSpecific.new(val)}
+YAML.add_domain_type('hypermonk.org,2013', 'by_format') {|type, val| FormatSpecific.new(val)}
 
 class Render::Context
   attr_reader :extension, :imported_resources
