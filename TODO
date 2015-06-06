@@ -1,0 +1,14 @@
+* Make paths relative in resources/xslt/pivot-to-*.xslt !
+* Better documentation:
+  - config/*
+  - pivot file format
+  - metadata.yml
+  - templates
+* Strip out any code specific to anglemort
+  - anglemort.pdf logo injection in LaTeX XSLT
+  - anglemort.jpg image injection in EPUB XSLT
+  - angle.css injection
+* Publish forked/fixed eeepub as a gem for cleaner dependencies
+* Publish hypermonk as its own standalone gem
+
+See also TODOs in bin/hypermonk.
