@@ -7,6 +7,10 @@ Hypermonk takes in HTML documents and YAML metadata to output high
 quality files in EPUB, Mobi (Kindle), PDF and HTML fragments (for
 Wordpress).
 
+Generating "issues" of a publication that brings together multiple
+sub-files ("chapters") referenced by a table of contents is also
+supported.
+
 All outputs can be customised using XSLT and LaTeX templates, as well
 as CSS.
 
@@ -38,13 +42,30 @@ $ bundle install
 
 ## Usage
 
-Once installed, go to your project directory (which should contain
-your `config` directory) and start hypermonk:
+Once installed, go to your project directory and setup all required
+files in the `config` directory (TODO: document!).
+
+To import a Word Document (`.doc`) as a plain HTML source, you can use
+`hypermonk-import`:
 
 ```
 $ cd my-project
-$ $HYPERMONK_PATH/bin/hypermonk
+$ mkdir new-folder
+$ $HYPERMONK_PATH/bin/hypermonk-import some-document.doc new-folder
 ```
+
+You will then be prompted for some metadata about this document, and
+the resulting file will be placed in the provided `new-folder`.
+
+To compile the source into one of the export format, run `hypermonk`:
+
+```
+$ cd my-project
+$ $HYPERMONK_PATH/bin/hypermonk new-folder epub  # or pdf, mobi, html
+```
+
+`hypermonk` will read information from the `metadata.yml` in the
+directory provided to populate the exported file (TODO: document!).
 
 
 ## Examples
