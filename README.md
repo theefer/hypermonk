@@ -15,6 +15,12 @@ All outputs can be customised using XSLT and LaTeX templates, as well
 as CSS.
 
 
+**Note: while technically generic, hypermonk currently still contains
+  some custom code specific to its use to publish the Angle Mort
+  magazine. Some extra work is required to allow fully generic use,
+  see TODO file.**
+
+
 ## Install
 
 Hypermonk requires Ruby (tested with 2.0.0) to be installed. We also
@@ -38,7 +44,6 @@ Then install Hypermonk's dependencies:
 $ gem install bundler
 $ bundle install
 ```
-
 
 ## Usage
 
