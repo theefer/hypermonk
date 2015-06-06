@@ -18,7 +18,8 @@ spec = Gem::Specification.new do |s|
   # s.add_development_dependency('mocha', '~> 0.9.12')
   # s.add_development_dependency('rcov', '~> 0.9.9')
 
-  s.add_dependency('eeepub', '~> 0.7.1')
+# Note: use a custom fixed fork of eeepub instead, see Gemfile
+#  s.add_dependency('eeepub', '~> 0.7.1')
   s.add_dependency('i18n')
   s.add_dependency('erubis')
   # s.add_dependency('hpricot')
