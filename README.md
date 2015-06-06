@@ -79,3 +79,9 @@ Hypermonk was developed to produce the francophone magazine of short
 speculative fiction [Angle Mort](http://www.angle-mort.fr/), which
 uses it to generate all its issues (both files you download/buy and
 the Web edition).
+
+
+## Licence
+
+This software was developed by Sébastien Cevey and is published under
+the GNU General Public License version 3 (see COPYING).
